@@ -1,0 +1,97 @@
+# Create generic Create/Delete routines 
+function __create () (echo "CREATE $1; ")
+function __delete () (echo "DROP $1; ")
+function __show_schema () (echo ":schema")
+
+###############USERS
+#Create user
+#Required: User, password, changePassword on startup
+function __create_user () (echo "CALL dbms.security.createUser($1, $2, $3);")
+#Delete User
+function __delete_user () (echo "CALL dbms.security.deleteUser($1);")
+#Assign Role to User 
+function __assign_role () (echo "CALL dbms.security.addRoleToUser(\"$1\", $2);")
+
+
+###############INDEX
+#Create index
+#Param: Label:Property where the index is created  ie: Album(Name)
+function __create_index () (echo "CREATE INDEX ON $1")
+
+#Drop index
+#Param: Label:Property where the index is dropped ie: Album(Name)
+function __drop_index () (echo "DROP INDEX ON $1")
+
+# Get all index based in a yield
+function __get_indexes () (echo "CALL db.indexes() YIELD $1")
+
+###############CONSTRAINTS
+# Create unique property constraint
+# Parameter $1 Object  ie: Person  $2 Property ie: Name
+function __create_uniqueconstraint () (echo "CREATE CONSTRAINT ON (n:$1) ASSERT n.$2 IS UNIQUE")
+
+# DROP unique property constraint
+# Parameter $1 Object  ie: Person  $2 Property ie: Name
+function __drop_uniqueconstraint () (echo "DROP CONSTRAINT ON (n:$1) ASSERT n.$2 IS UNIQUE")
+
+######################TOOLS
+# Profile a query
+# Param: match label ie. Person { name: 'Tom Hanks' }
+function __get_indexes () (echo "PROFILE MATCH (p:$1) RETURN p")
+function __get_NodeModel () (echo "MATCH (n:NodeModel) RETURN n")
+function __create_model () ( echo "CREATE (n:NodeModel {label: 'PersistenceObject', \` _internalId\`: 'long', \` _createdTime\`: 'Date', \` _lastUpdatedTime\`: 'Date', \` _level\`: 'short'})" )
+
+function __delete_allnodes () (echo " MATCH (n) OPTIONAL MATCH (n)-[r]-() DELETE n, r ")
+function __drop_database () (echo "MATCH (n) DETACH DELETE n")
+
+function __get_role() (echo "CALL dbms.cluster.role()")
+function __get_cluster() (echo "CALL dbms.cluster.overview()")
+
+
+################# USEFUL functions
+
+# enforce one or more indexes with a hint
+# Param: $1 Album {Name: "Somewhere in Time"}
+#        $2 Index name .. ie: Album(Name)
+function __get_node_byindex () (echo " MATCH (a:$1) USING INDEX a:$2 RETURN a")
+
+# Update Nodes based on properties $1 and new Values $2
+#Param: Object $1, Filter $2 ie: name = "Rik" and new value $3 ie: owns = "Audi"
+function __update_node () (echo "MATCH ($1) WHERE $1.$2 SET $1.$3")
+
+# Replace all node properties for the new ones (Danger: It will delete all previous properties)
+function __replace_node_properties () (echo "MATCH ($1) WHERE $1.$2 SET $1 = {$3}")
+
+# Add a new property node $1 where property $2 is equal to Value $3 (Add new node properties without deleting old ones)
+function __add_node_property () (echo "MATCH ($1) WHERE $1.$2 SET $1 += {$3}")
+
+# Find a node $1 where property $2 is equal to Value $3
+function __get_node_byproperty () (echo "MATCH (ee:$1) WHERE ee.$2 = "$3" RETURN ee;")
+
+#Find the unique labels that appear in the database
+# param: Label
+function __get_unique_label () (echo "MATCH n return distinct labels($1)")
+
+#Find the unique relationships that appear in the database:
+# param: Relationship
+function __get_unique_label () (echo "MATCH n-[$1]-() return distinct type($1)")
+
+#Find nodes that don't have any relationships:
+function __get_allnodes_norelationship () (echo "MATCH (n)-[r]-() where r is null return n")
+
+#Find all nodes that have a specific property
+# param: property
+function __get_allnodes_byproperty () (echo "MATCH (n) where EXISTS(n.$1) return n")
+
+# Find all nodes that have a specific relationship (regardless of the direction of the relationship)
+# param: Relationship
+function __get_allnodes_byRelationship () (echo "MATCH (n)-[:$1]-() return distinct n")
+
+# Show the nodes and a count of the number of relationships that they have:
+function __get_nodes_relationship () (echo "MATCH (n)-[r]-() return n, count(r) as rel_count order by rel_count desc")
+
+#Get a count of all nodes in your graph
+function __get_allnodes () (echo "MATCH (n) RETURN count(*)")
+
+#To delete all nodes in a databse (first you have to delete all relationships)
+function __delete_allrelationship() (echo " MATCH (n)-[r]-() delete r ")

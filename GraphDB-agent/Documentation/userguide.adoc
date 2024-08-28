@@ -1,0 +1,883 @@
+= GraphDB Agent user guide
+:author: Luis Islas
+:doc-name: Graph Database Agent - User Guide
+:doc-no:
+:revnumber:
+:revdate: {sys: date +%Y-%m-%d}
+:approved-by-name:
+:approved-by-department: BDGS
+
+== Introduction
+This document will describe how to operate the **GraphDB Agent** in a Kubernetes environment.
+
+=== Function overview
+The GraphDB Agent is a solution which helps to the final user to execute post-tasks over GraphDB once the service is started is 100% coupled with their current integration applications.
+
+The Agent operation is based, in the tasks and resources definitions defined mainly in a Helm's values yaml file. There the user is capable to define in a simple way the entire resources requested to be used for a set the scripts executed in a client specific order.
+
+The agent's main access points are the shell scripts defined in an specific section in the helm values. Those shell scripts are being executed as a subshell in a remote pod "agent" prepared for this. This way, the agent execution is isolated from the original GraphDB service, allowing the user to catch their exception (using either set -e or an specific python mechanism) to control their execution.
+
+The main elements working around the agent are:
+
+* **orchestrator.sh**
++
+The **orchestrator.sh** is an script located and exposed in the main graphDB service. This script is the one in charge of control the execution of all the scripts indicated in the client values file. This scripts was originally thinked as a solution which could be used in the helm post-pre jobs, but finally was adecuated to be used in the agent too.
+The file is controlled in the graphDB service to avoid any code change and is provided as a mechanism to execute the scripts mainly. This file is defined on the graphdb service and is shared with the agent.
+
+
+* **common.sh**
++
+**common.sh** is a set of common routines which should help in the use of the scripts development. We main common routines defined are:
+
+** run_cypher_query
++
+This function allows the execution of a Cypher query in the agent pod
+** run_cypher_query_with_retry
++
+This function allows the execution of a cypher query but it retries 5 times. 
+** get_cypher_query
++
+This function allows the execution of a Cypher query in the agent pod and it returns the output of that execution
+** create_user
++
+Creates a user in all the pods working for the GraphDB service. The function validates the roles defined and if the user exists previously.
+** create_users_fromFile
++
+This function reads either a CSV or json file and creates all the users listed there. The users are added in all the pods.  
+** create_index
++
+Creates an index in the entire GraphDB service
+** create_index_fromFile
++
+Reads a pipe splitted index file and creates/recreate the indexes listed in the index file.
+** delete_index
++
+Delete an specific index
+** getRole
++
+Based in a pod parameter, it returns their current role in the graphDB cluster.
+** getLeader_fullname
++ 
+Returns the full leader pod name, including the pod name, the namespace and the domain name.
+** getLeader_name
+
++
+Returns the Leader's pod name.
+
+
++
+All these routines can accept 3 optional parameters:
+
+** ** -q {cypher command to be executed}  **
++
+This is mandatory for the routines executor query
+** ** -p { Pod name where the cypher query is executed} **
++
+If not pod parameter is included the system will use the GraphDB service instead and will use the bolt+routing protocol to allow BOLT to identify the best pod to execute the query
+** ** -n {Name space where the pods are running} **
++
+If not defined, the system will use the default client namespace instead.
+
+[NOTE]
+====
+This common file is located in the graphdb image extension. <<_additionadetails, See additional files>>
+====
+
+* **queries.txt**
++
+**queries.txt** is an ascii file, where are defined some basic cypher routines. The routines are defined as simple basic functions which accepts parameters to complement the required cypher command: Example:
++
+** __create_user "user" "password" "false" 
+** __assign_role "user" "reader"
+
+
+[NOTE]
+====
+This "queries.txt" file is located in the graphdb image extension. <<_additionadetails, See additional files>>.
+====
+* **client_values.yaml**
++
+This is the file created by the user which basically allows the definition of the scripts using the libraries defined in common and queries and being executed remotely with the orchestrator.
+
+[NOTE]
+====
+The values file is created by the client and must follows the same rules as any yaml file.
+====
+
+=== How to execute an agent job
+In order to execute an agent job, a previously instance of graphdb should be up and running, even  
+
+[source,highlight=1;3; bash]
+----
+helm upgrade --install eisljos-dev-agent /c/git2/cleanUp/GraphDB-ENM/GraphDB-agent/Helm/graphdb-agent/ --set remoteScripts.graphdb_name=graphdb-neo4j -f /c/projects/neo4j/config/values_Agent_UnitTests.yaml
+
+Be careful to properly indicate the GraphDB service name to be connected with the agent. 
+
+The following is indicated with the parameter graphdb_name as indicated here:
+
+--set remoteScripts.graphdb_name=graphdb-neo4j
+----
+
+Once the agent is running, you should be able to see the logs messages using the following command
+[source bash]
+----
+AGENT="$(kubectl get pods -o go-template --template '{{range .items}}{{.metadata.name}}{{end}}' -lapp=graphdb-agent)"
+
+kubectl logs $AGENT
+----
+
+Any exception should be displayed here, besides any message echoed to the standard output should be listed here.
+
+=== Creating yor Values file
+The values file, is the element required for the client to define the scripts to be executed.
+The values file has 4 main sections which need to be configured:
+
+* core.initContainer
+* remoteScripts
+* volumes
+** additionalVolumes
+** additionalVolumeMounts
+* configmap
+
+==== InitContainer
+The initContainer subsection (defined in core) allows to setup and download  files/scripts/jars that will be required in the agent execution. ie:
+
+[source, yaml]
+----
+core:
+  initContainer:
+  # init containers to run before the Neo4j core pod e.g. to install plugins
+  - name: init-scripts
+    image: "armdocker.rnd.ericsson.se/aia_snapshots/ericneo4jserverextension:0.0.1-1"
+    imagePullPolicy: "Always"
+    volumeMounts:
+    - name: scripts
+      mountPath: /scripts
+    command: ["/bin/sh", "-c"]
+    args:
+      - cp -fr /opt/ericsson/lifecycle-scripts/* /scripts/
+----
+
+This example shows how to mount an image extension (including the common and queries defined for Cypher) and copy the content from /opt/ericsson/lifecycle-scripts/ into the agent /scripts/ directory.
+
+Once the agent start their operation, it will copy this file to a temporary directory for their execution.
+
+==== remoteScripts
+
+In this section, the client is able to define the scripts and parameters required to be executed by the agent. 
+
+[source, yaml]
+----
+remoteScripts:
+  graphdb_name: "graphdb-neo4j"
+  admin_user: "neo4j"
+  parameters: 
+    check_neo4j.sh: -n 3
+    configuregraphdb.sh: /var/lib/neo4j/remote-scripts/data/newUsers.json /var/lib/neo4j/remote-scripts/data/userDefinedIndexes.txt
+
+----
+
+in this example, the system will execute first the routine check_neo4j.sh (loaded from the initcontainer section) and then it will execute the script "configuregraphdb.sh". 
+The configuregraphdb script is defined in the configmap section of values. This way, the user can dinamically define what steps should be required to be executed. 
+
+[NOTE]
+====
+The parameters doesn't supports environment variables, which are handled by the orchestrator main script. It can be implemented there if required.
+====
+
+
+==== additionalVolumes and additionalVolumeMounts
+Additional volumes can be integrated and mounted in the agent and are used mainly to load the scripts and values files dinamically into the agent.
+
+You must take in consideration the paths being used to mount this files. 
+
+* /var/lib/neo4j/remote-scripts/user/ 
++
+This path must be used to mount the scripts, the system will look into this path to copy all this content into one temporary path.
+If you define data files in this path, will be copy into the same scripts path too, so you will be able to reference the files without the full path.
+* /var/lib/neo4j/remote-scripts/data
++
+This path could be used to keep the data required to be used in the scripts. Any file mounted there needs to be referenced using the full path file as a parameter.
+
+[source yaml]
+----
+additionalVolumeMounts:
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/user/configuregraphdb.sh"
+    subPath: "configuregraphdb.sh"
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/data/userDefinedIndexes.txt"
+    subPath: "userDefinedIndexes.txt"
+----
+
+in this example, the file configuregraphdb script is mounted under /var/lib/neo4j/remote-scripts/user/ and their data is mounted under /var/lib/neo4j/remote-scripts/data/ so will be required to reference the full path file as a parameter in the remoteScripts section
+
+
+==== configmap
+This are allow to define all the files and scripts required. It follows the same rules applied for k8s kubernetes.
+
+[source yaml]
+----
+configmap:
+   name: *configmap
+   data:
+     userDefinedIndexes.txt: |
+       INDEX ON :FM:OpenAlarm(fdn)|INDEX ON :`FM:OpenAlarm`(fdn)
+       INDEX ON :FM:OpenAlarm(alarmNumber, objectOfReference)|INDEX ON 
+     newUsers.json: |
+       [
+        { "username":"dps_user","password":"Neo4juser123","requirePasswordChange":false ,"role":"architect"},
+        { "username":"reader_user","password":"Neo4jreader123","requirePasswordChange":false ,"role":"reader"}
+       ]
+     configuregraphdb.sh: |-
+       #!/bin/bash
+       # This file must be mounted on .Values.scripts.directory to be executed
+       SCRIPT_PATH=$(dirname "$0")
+       source $SCRIPT_PATH/"common.sh"
+       add_node_model() {
+           NodeModel="$(get_cypher_query -q "$(__get_NodeModel)" )"
+           if [[ ! -z $NodeModel ]]; then
+               echo "NodeModel already present, not creating."
+           else
+               echo "NodeModel not present, creating."
+               run_cypher_query  -q "CREATE (n:NodeModel {label: 'PersistenceObject', \` _internalId\`: 'long', \` _createdTime\`: 'Date', \` _lastUpdatedTime\`: 'Date', \` _level\`: 'short'})"
+               echo "Creating NodeModel constraints."
+               run_cypher_query -q "$(__create_uniqueconstraint "NodeModel" "label")"
+               run_cypher_query -q "$(__create_uniqueconstraint "RelationshipModel" "type")" 
+           fi
+       }
+       # Create users from data file.
+       create_users_fromFile $1
+       # Add node model.
+       add_node_model
+       # Create indexes from data file.
+       create_index_fromFile $2
+----
+
+In this example, 3 files are defined in configmap 1 script and 2 data files. 
+[NOTE]
+====
+   The create_users_fromFile scripts supports either json files or csv files to create users.
+   
+   The create_index_fromFile scripts handle the index splitted by a '|' charater to be processed.
+====
+
+[#_additionadetails]
+=== Additional details
+
+==== queries.txt
+[%collapsible]
+====
+[,text]
+----
+# Create generic Create/Delete routines 
+function __create () (echo "CREATE $1; ")
+function __delete () (echo "DROP $1; ")
+function __show_schema () (echo ":schema")
+Delete all relationships
+
+###############USERS
+#Create user
+#Required: User, password, changePassword on startup
+function __create_user () (echo "CALL dbms.security.createUser($1, $2, $3);")
+#Delete User
+function __delete_user () (echo "CALL dbms.security.deleteUser($1);")
+#Assign Role to User 
+function __assign_role () (echo "CALL dbms.security.addRoleToUser(\"$1\", $2);")
+
+
+###############INDEX
+#Create index
+#Param: Label:Property where the index is created  ie: Album(Name)
+function __create_index () (echo "CREATE INDEX ON $1")
+
+#Drop index
+#Param: Label:Property where the index is dropped ie: Album(Name)
+function __drop_index () (echo "DROP INDEX ON $1")
+
+# Get all index based in a yield
+function __get_indexes () (echo "CALL db.indexes() YIELD $1")
+
+###############CONSTRAINTS
+# Create unique property constraint
+# Parameter $1 Object  ie: Person  $2 Property ie: Name
+function __create_uniqueconstraint () (echo "CREATE CONSTRAINT ON (n:$1) ASSERT n.$2 IS UNIQUE")
+
+# DROP unique property constraint
+# Parameter $1 Object  ie: Person  $2 Property ie: Name
+function __drop_uniqueconstraint () (echo "DROP CONSTRAINT ON (n:$1) ASSERT n.$2 IS UNIQUE")
+
+######################TOOLS
+# Profile a query
+# Param: match label ie. Person { name: 'Tom Hanks' }
+function __get_indexes () (echo "PROFILE MATCH (p:$1) RETURN p")
+function __get_NodeModel () (echo "MATCH (n:NodeModel) RETURN n")
+function __create_model () ( echo "CREATE (n:NodeModel {label: 'PersistenceObject', \` _internalId\`: 'long', \` _createdTime\`: 'Date', \` _lastUpdatedTime\`: 'Date', \` _level\`: 'short'})" )
+
+function __delete_allnodes () (echo " MATCH (n) OPTIONAL MATCH (n)-[r]-() DELETE n, r ")
+function __drop_database () (echo "MATCH (n) DETACH DELETE n")
+
+function __get_role() (echo "CALL dbms.cluster.role()")
+function __get_cluster() (echo "CALL dbms.cluster.overview()")
+
+
+################# USEFUL functions
+
+# enforce one or more indexes with a hint
+# Param: $1 Album {Name: "Somewhere in Time"}
+#        $2 Index name .. ie: Album(Name)
+function __get_node_byindex () (echo " MATCH (a:$1) USING INDEX a:$2 RETURN a")
+
+# Update Nodes based on properties $1 and new Values $2
+#Param: Object $1, Filter $2 ie: name = "Rik" and new value $3 ie: owns = "Audi"
+function __update_node () (echo "MATCH ($1) WHERE $1.$2 SET $1.$3")
+
+# Replace all node properties for the new ones (Danger: It will delete all previous properties)
+function __replace_node_properties () (echo "MATCH ($1) WHERE $1.$2 SET $1 = {$3}")
+
+# Add a new property node $1 where property $2 is equal to Value $3 (Add new node properties without deleting old ones)
+function __add_node_property () (echo "MATCH ($1) WHERE $1.$2 SET $1 += {$3}")
+
+# Find a node $1 where property $2 is equal to Value $3
+function __get_node_byproperty () (echo "MATCH (ee:$1) WHERE ee.$2 = "$3" RETURN ee;")
+
+#Find the unique labels that appear in the database
+# param: Label
+function __get_unique_label () (echo "MATCH n return distinct labels($1)")
+
+#Find the unique relationships that appear in the database:
+# param: Relationship
+function __get_unique_label () (echo "MATCH n-[$1]-() return distinct type($1)")
+
+#Find nodes that don't have any relationships:
+function __get_allnodes_norelationship () (echo "MATCH (n)-[r]-() where r is null return n")
+
+#Find all nodes that have a specific property
+# param: property
+function __get_allnodes_byproperty () (echo "MATCH (n) where EXISTS(n.$1) return n")
+
+# Find all nodes that have a specific relationship (regardless of the direction of the relationship)
+# param: Relationship
+function __get_allnodes_byRelationship () (echo "MATCH (n)-[:$1]-() return distinct n")
+
+# Show the nodes and a count of the number of relationships that they have:
+function __get_nodes_relationship () (echo "MATCH (n)-[r]-() return n, count(r) as rel_count order by rel_count desc")
+
+#Get a count of all nodes in your graph
+function __get_allnodes () (echo "MATCH (n) RETURN count(*)")
+
+#To delete all nodes in a databse (first you have to delete all relationships)
+function __delete_allrelationship() (echo " MATCH (n)-[r]-() delete r ")
+----
+====
+
+==== common.sh
+[%collapsible]
+====
+[,bash]
+----
+#!/bin/bash
+#Common functions used in the graphdb agent 
+# Environment variables supported:
+# ADMIN_USER (default neo4j)
+# NAMESPACE
+# ADMIN_PASSWORD=Neo4jadmin123
+# NUMBER_OF_CORES=3
+# NEO4J_BOLT_PORT=7687
+# NEO4J_HTTP_PORT=7474
+# NEO4J_causal__clustering_service (full neo4j causal service name)
+
+SCRIPT_PATH=$(dirname "$0")
+source "$SCRIPT_PATH/queries.txt"
+
+#Constants
+_CYPHER_SHELL=$(which cypher-shell)
+BOLT="bolt"
+ERROR_RUNNING_CYPHER_QUERY_CODE=3
+RET_EXIT_FAIL=-20
+FAIL_NOT_FOUND=-30
+PODNAME="$NEO4J_PODNAME"
+ROLES="reader editor publisher architect admin"
+
+usage() {
+  echo "Usage: $0 [-q Query] {-p pod} {-n namespace}" 1>&2;
+  echo "   q: Cypher Query to be executed"
+  echo "   n: namespace default: $NAMESPACE"
+  echo "   p: specific pod, if not defined service is used instead: ${NEO4J_causal__clustering_service}"
+  exit -1;
+}
+
+# Reads params to be used in the run_cypher_query functions
+# -p includes the query to be executed
+# -n if you require to include a diferent namespace
+# -p if you request to execute the query in an specific pod.
+#    if pod is included the protocol by default will be bolt
+#    if pod is not defined the query will be executed on the service using the protocol bolt+routing
+getParams() {
+    unset QUERY
+    unset PODQUERY
+    while getopts ":q:p:n:h:" o; do
+      case "${o}" in
+      n)
+        NAMESPACE=${OPTARG}
+        ;;
+      p)
+        PODQUERY=${OPTARG}
+        ;;
+      q)
+        QUERY=${OPTARG}
+        ;;
+      h |*)
+        usage
+        ;;
+      esac
+    done
+    shift $((OPTIND-1))
+    OPTIND=1
+
+   if [[ -z "${QUERY}" ]]; then
+     usage
+   fi
+    if [[ -z $PODQUERY ]]; then
+      export NEO4J_SRV="${NEO4J_causal__clustering_service}"
+      BOLT="bolt+routing"
+    else
+      export NEO4J_SRV="$PODQUERY.${NEO4J_causal__clustering_service}"
+      BOLT="bolt"
+    fi
+}
+
+# Execute a cypher query- ADMIN_USER and ADMIN_PASSWORD and environment variables
+run_cypher_query() {
+   getParams "$@"
+    $_CYPHER_SHELL -u  $ADMIN_USER -p $ADMIN_PASSWORD -a $BOLT://"${NEO4J_SRV}:${NEO4J_BOLT_PORT}" "$QUERY"
+    ret_code=$?
+    return $ret_code
+}
+
+#Execute a cypher query and return the result - ADMIN_USER and ADMIN_PASSWORD and environment variables
+get_cypher_query() {
+   getParams "$@"
+    RESULT=`$_CYPHER_SHELL -u  $ADMIN_USER -p $ADMIN_PASSWORD --format plain -a $BOLT://"${NEO4J_SRV}:${NEO4J_BOLT_PORT}" "$QUERY"`
+    echo $RESULT
+}
+
+# Execute a cypher query with 5 retries- ADMIN_USER and ADMIN_PASSWORD and environment variables
+run_cypher_query_with_retry(){
+   getParams "$@"
+   MAX_ATTEMPTS=5
+   attempt=0
+   for ((i=1;i<=$MAX_ATTEMPTS ;i++));
+   do
+       run_cypher_query "$@"
+       ret_code=$?
+       if [ $ret_code -eq 0 ]; then
+          exit_code=0
+          break
+       else
+         echo "Failed to run cypher query retry $attempt of $MAX_ATTEMPTS. return code: ${ret_code}"
+         exit_code=${ERROR_RUNNING_CYPHER_QUERY_CODE}
+
+       fi
+   done
+   return $exit_code
+}
+export -f run_cypher_query
+
+# Search on a list for an specific string splitted between spaces.
+# Used to validate the role specified in the users
+contains() {
+  [[ $1 =~ (^|[[:space:]])$2($|[[:space:]]) ]] && return 0 || return 1
+}
+
+# Validates if the file provided is a valid json file or not. It uses JQ as validator
+is_json(){
+  if cat $1 | jq -e . >/dev/null 2>&1; then return 0; else return 1; fi
+}
+
+# Validates if the file provided is a valid CSV file or not.
+is_csv(){
+  iscsv="$(awk ' BEGIN{FS=","}!n{n=NF;}n!=NF||NF<2{failed=1;exit}END{print failed}' $1)"
+  if [[ -z ${iscsv} ]]; then
+     return 0
+  else
+     return 1
+  fi
+}
+
+# Reads the content of the JSON file and creates a json array with the details included
+import_fromJson(){
+   declare -n jsonArr="$1"
+   is_json $2
+   cat $2 | jq -c '.[]'
+   if is_json $2; then
+      readarray -t jsonArr <<<$(cat $2 | egrep -v "(^#.*|^$)" | jq -c '.[]')
+   else
+       echo "Failed to parse JSON $2, or got false/null"
+   fi
+}
+
+# Reads the content of the CSV's file and creates a json array with the details included
+import_fromCSV() {
+   declare -n csvArr="$1"
+   readarray -t csvArr <<< $(
+    awk '
+    BEGIN {
+        FS=","
+    }
+    {
+        if(NR==1) {
+        # read headers
+            for (i=0; i<NF; i++) {
+                headers[i] = $(i+1)
+            }
+        } else {
+            for (i=0; i<NF; i++) {
+                fields[NR][i] = $(i+1)
+            }
+        }
+    }
+
+    END {
+       line=""
+       for (f in fields) {
+            line=""
+            for (j=0; j<NF; j++) {
+                line=line"\""headers[j]"\":\""fields[f][j]"\""
+                if (j!=NF-1) line=line","
+            }
+            print "{" line "}"
+        }
+
+    }' $2)
+}
+
+# Create user: username, password, role, requirePasswordChange (true/false)
+# Role:
+#   reader
+#       Read-only access to the data graph (all nodes, relationships, properties).
+#   editor
+#       Read/write access to the data graph.
+#       Write access limited to creating and changing existing properties key, node labels, and relationship types of the graph.
+#   publisher
+#       Read/write access to the data graph.
+#   architect
+#       Read/write access to the data graph.
+#       Set/delete access to indexes along with any other future schema constructs.
+#   admin
+#       Read/write access to the data graph.
+#       Set/delete access to indexes along with any other future schema constructs.
+#       View/terminate queries.
+create_user () {
+  username="$1"
+  password="$2"
+  role="$(echo "$3" | awk '{print tolower($0)}')"
+  requirePasswordChange="$4"
+
+  role="${role%\"}"
+  role="${role#\"}"
+
+  contains "$ROLES" "$role"
+  result=$?
+
+  if [[ $result != 0 ]]; then
+     echo "Invalid role: $role for user $username"
+     return -1
+  fi
+
+  for((i=0;i<$NUMBER_OF_CORES;++i)); do
+     POD="$PODNAME-$i"
+     run_cypher_query -q "$(__create_user ${username} ${password} ${requirePasswordChange})"  -p "$POD"
+     retcode=$?
+    if [ ${retcode} -eq 124 ]; then
+        echo "Creating user " $username " timed out"
+        RETVAL=1
+    elif [ ${retcode} -eq 0 ]; then
+        echo "User " $username " created successfully"
+        RETVAL=0
+    else
+        echo "Creating user " $username " failed"
+        RETVAL=1
+    fi
+     run_cypher_query -q "$(__assign_role "${role}" ${username})" -p "$POD"
+     retcode=$?
+     if [ ${retcode} -eq 124 ]; then
+        echo "Assigning role '$role' to user '$username' timed out"
+        RETVAL=1
+     elif [ ${retcode} -eq 0 ]; then
+        echo "Assigning role '$role' to user '$username' succeeded"
+        RETVAL=0
+     else
+        echo "Assigning role '$role' to user '$username' failed"
+        RETVAL=1
+     fi
+
+  done
+
+}
+
+# Main command to create users based on an either a json or csv file.
+create_users_fromFile() {
+  declare -a myarray
+  USERS_FILE=$1
+  if [[ ! -f "$USERS_FILE" ]]; then
+    echo "$USERS_FILE does not exist"
+    return -1
+  fi
+  if is_json $USERS_FILE; then
+     import_fromJson myarray $USERS_FILE
+  elif is_csv $USERS_FILE; then
+     import_fromCSV myarray $USERS_FILE
+  else
+     echo "Invalid file to load users: $USERS_FILE "
+     exit -1
+  fi
+  for user in "${!myarray[@]}"; do
+     username=$(echo "${myarray[user]}" | jq .username)
+     password=$(echo "${myarray[user]}" | jq .password)
+     role=$(echo "${myarray[user]}" | jq .role)
+     requirePasswordChange=$(echo "${myarray[user]}" | jq .requirePasswordChange)
+     create_user  $username $password $role $requirePasswordChange
+  done
+}
+
+# Given the index name it deleted from the database 
+delete_index () {
+   INDEX="$(echo "$1" | awk '{print tolower($0)}')"
+   if [[ "${INDEX}" == *"index on "* ]]; then
+      INDEX="$(awk '{print substr($0,index($0,":"))}' <<< $INDEX)"
+   fi
+   run_cypher_query -q "$(__drop_index "${INDEX}")" && exit_code=$?
+   if [[ $exit_code != 0 ]]; then
+     echo "Failed to delete user defined index: ${INDEX}"
+     return 3
+   else
+     echo "Deleted user defined index: ${INDEX}"
+     return 0
+   fi
+}
+
+# Creates and index, it first validates if the index was previously created and if so it's removed first
+create_index () {
+   # changed to lowercase
+   INDEX="$(echo "$1" | awk '{print tolower($0)}')"
+   if [[ "${INDEX}" == *"index on "* ]]; then
+      INDEX="$(awk '{print substr($0,index($0,":"))}' <<< $INDEX)"
+   fi
+   if [[ ! -z $3 ]]; then
+      if [[ "$3" == "true" ]]; then
+         delete_index "${INDEX}" && ret_code=$?
+      fi
+   fi
+   run_cypher_query -q "$(__create_index "${INDEX}")" && ret_code=$?
+   if [[ "${ret_code}" -eq "${ERROR_RUNNING_CYPHER_QUERY_CODE}" ]]; then
+     echo "Failed to create new user defined index: $INDEX"
+     exit_code=3
+   fi
+   echo "Created new user defined index: $INDEX"
+
+   return $exit_code
+}
+
+# Reads the file content including the indexes to be created 
+# The file is splitted by a | and indicates the name of the index (To look for) and the instruction to be executed to create the index  ie:
+#       INDEX ON :FM:OpenAlarm(fdn)|INDEX ON :`FM:OpenAlarm`(fdn)
+#       INDEX ON :FM:OpenAlarm(alarmNumber, objectOfReference)|INDEX ON :`FM:OpenAlarm`(alarmNumber, objectOfReference)
+create_index_fromFile() {
+
+  declare -a myarray
+  INDEXES_FROM_FILE="$1"
+  if [[ ! -f "$INDEXES_FROM_FILE" ]]; then
+    echo "$INDEXES_FROM_FILE does not exist"
+    return -1
+  fi
+  POD="$(getLeader_name)"
+
+  INDEXES_FROM_SERVER="$(get_cypher_query -q "CALL db.indexes() YIELD description" | awk '{print tolower($0)}' )"
+  INDEXES="$(eval 'for word in '$INDEXES_FROM_SERVER'; do if [[ $word == *"index on"* ]]; then echo $word; fi; done')"
+  while IFS=\| read -r INDEX_NAME INDEX_QUERY || [[ -n "$INDEX_QUERY" ]]; do
+    if [[ ! -z "${INDEX_NAME}" ]]; then
+      if grep -q "$INDEX_NAME" <<< $INDEXES_FROM_SERVER; then
+          echo "User defined index already exists: $INDEX_NAME"
+      else
+          create_index "${INDEX_QUERY}" "${INDEX_NAME}" "true"
+      fi
+    fi
+  done < <(tail -n +1 $INDEXES_FROM_FILE)
+
+}
+
+# Returns the role name for an specific pod name
+getRole() {
+   POD="$1"
+   OUTPUT="$(get_cypher_query -q "$(__get_role)" -p $POD)"
+   echo $OUTPUT
+}
+
+# Returns the complete full name of the pod Leader 
+getLeader_fullname() {
+  OUTPUT="$(get_cypher_query -q "$(__get_cluster)")"
+  IFS=',' read -ra ADDR <<< "$OUTPUT"
+  LEADER=""
+  for i in "${!ADDR[@]}"; do
+      if [[ ${ADDR[$i]} == *"LEADER"* ]];then
+         var=$((i-1))
+         LEADER=$(awk '{ POD=substr($0, index ($0,"//")+2,100); print substr(POD,0,index(POD,":")-1)}' <<< "${ADDR[$var]}")
+         break
+      fi
+  done
+  echo $LEADER
+}
+
+# Returns the name of the pod Leader 
+getLeader_name() {
+  POD="$(getLeader_fullname)"
+  IFS='.' read -ra ADDR <<< "$POD"
+  echo  "${ADDR[0]}"
+}
+
+----
+====
+
+==== client_value.yaml
+[%collapsible]
+====
+[, yaml]
+----
+global:
+  registry:
+  # Mandatory: Used to compose the image name 
+    url: armdocker.rnd.ericsson.se
+  repoPath: "aia_snapshots"
+ 
+imageCredentials:
+  registry:
+    url: # overrides global registry url
+    #pullSecret: # note: armdocker does not request pullSecret
+  repoPath: "aia_snapshots"
+
+# Mandatory Image information
+images:
+  graphdb_n4j:
+  # Mandatory: Used to compose the global image name
+    name: "graphdb-n4j"
+  # Mandatory: Used to compose the global image name
+    tag: "0.0.1-c2dc540"
+    # Mandatory could be IfNotPresent, Always, Never
+    imagePullPolicy: "Always"
+
+annotations:
+  job:
+    ericsson.com/product-name: "eric-data-graph-database-nj"
+    ericsson.com/product-number: "CAV 101090/1"
+    ericsson.com/product-revision: "R1B"  
+
+config:
+  # Optional Pass extra environment variables to Neo4j container.
+  extraVars:
+  - name: "NAMESPACE"
+    value: "eisljos-dev"
+  - name: "CYPHERSHELL_PATH"
+    value: "/var/lib/neo4j/bin/cypher-shell"
+
+core:
+  initContainer:
+  # init containers to run before the Neo4j core pod e.g. to install plugins
+  - name: init-scripts
+    image: "armdocker.rnd.ericsson.se/aia_snapshots/ericneo4jserverextension:0.0.1-1"
+    imagePullPolicy: "Always"
+    volumeMounts:
+    - name: scripts
+      mountPath: /scripts
+    command: ["/bin/sh", "-c"]
+    args:
+      - cp -fr /opt/ericsson/lifecycle-scripts/* /scripts/
+
+# Mandatory: This scripts is the one which controls the execution of the scripts 
+scripts:
+  directory: "/tmp/scripts"
+  orchestrator:
+    filename: "orchestrator.sh"
+# Define the scripts which will be executed by the agent.
+# - Defines the script name and the parameters required for it.
+remoteScripts:
+  graphdb_name: "graphdb-neo4j"
+  admin_user: "neo4j"
+  parameters: 
+    check_neo4j.sh: -n 3
+    configuregraphdb.sh: /var/lib/neo4j/remote-scripts/data/newUsers.json /var/lib/neo4j/remote-scripts/data/userDefinedIndexes.txt
+
+# Define the remote config map to be used when mounts the files.
+# Config map name should be unique in the namespace. 
+additionalVolumes:
+  - name: user-data
+    configMap:
+      name: &configmap graphdb-agent-configmap
+      defaultMode: 0755
+
+# Mandatory: The only path required to include the scripts into the execution area is 
+# - /var/lib/neo4j/remote-scripts/user/
+additionalVolumeMounts:
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/user/configuregraphdb.sh"
+    subPath: "configuregraphdb.sh"
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/data/userDefinedIndexes.txt"
+    subPath: "userDefinedIndexes.txt"
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/data/newUsers.json"
+    subPath: "newUsers.json"
+configmap:
+   name: *configmap
+   data:
+     userDefinedIndexes.txt: |
+       INDEX ON :FM:OpenAlarm(fdn)|INDEX ON :`FM:OpenAlarm`(fdn)
+       INDEX ON :FM:OpenAlarm(alarmNumber, objectOfReference)|INDEX ON :`FM:OpenAlarm`(alarmNumber, objectOfReference)
+       INDEX ON :FM:SpecificProblemInformation(specificProblem, neType)|INDEX ON :`FM:SpecificProblemInformation`(specificProblem, neType)
+       INDEX ON :FM:ProbableCauseInformation(probableCause, neType)|INDEX ON :`FM:ProbableCauseInformation`(probableCause, neType)
+       INDEX ON :FM:EventTypeInformation(eventType, neType)|INDEX ON :`FM:EventTypeInformation`(eventType, neType)
+       INDEX ON :FM:AlarmTypeStatistic(fdn)|INDEX ON :`FM:AlarmTypeStatistic`(fdn)
+       INDEX ON :FM:AlarmCountStatistic(fdn)|INDEX ON :`FM:AlarmCountStatistic`(fdn)
+       INDEX ON :FM:AlarmSeverityStatistic(fdn)|INDEX ON :`FM:AlarmSeverityStatistic`(fdn)
+       INDEX ON :BatchExportService:NodeExportResult(jobId, _bucket)|INDEX ON :`BatchExportService:NodeExportResult`(jobId, ` _bucket`)
+       INDEX ON :BatchExportService:JobInput(jobId, _bucket)|INDEX ON :`BatchExportService:JobInput`(jobId, ` _bucket`)
+       INDEX ON :BatchExportService:JobOutput(jobId, _bucket)|INDEX ON :`BatchExportService:JobOutput`(jobId, ` _bucket`)
+       INDEX ON :BatchExportService:MasterExportJobInput(jobId, _bucket)|INDEX ON :`BatchExportService:MasterExportJobInput`(jobId, ` _bucket`)
+       INDEX ON :CmConfigService:NodeCopyResult(jobId, _bucket)|INDEX ON :`CmConfigService:NodeCopyResult`(jobId, ` _bucket`)
+       INDEX ON :CmConfigService:JobOutput(jobId, _bucket)|INDEX ON :`CmConfigService:JobOutput`(jobId, ` _bucket`)
+       INDEX ON :CmConfigService:AppliedChangeResult(jobId, _bucket)|INDEX ON :`CmConfigService:AppliedChangeResult`(jobId, ` _bucket`)
+       INDEX ON :CmConfigService:ActivateJobOutput(jobId, _bucket)|INDEX ON :`CmConfigService:ActivateJobOutput`(jobId, ` _bucket`)
+       INDEX ON :shm:NEJob(mainJobId, _bucket)|INDEX ON :`shm:NEJob`(mainJobId, ` _bucket`)
+       INDEX ON :shm:ActivityJob(neJobId, _bucket)|INDEX ON :`shm:ActivityJob`(neJobId, ` _bucket`)
+     newUsers.json: |
+       [
+        { "username":"dps_user","password":"demo","requirePasswordChange":false ,"role":"architect"},
+        { "username":"reader_user","password":"demo","requirePasswordChange":false ,"role":"reader"}
+       ]
+     configuregraphdb.sh: |-
+       #!/bin/bash
+       # This file must be mounted on .Values.scripts.directory for the executed
+       SCRIPT_PATH=$(dirname "$0")
+       source $SCRIPT_PATH/"common.sh"
+       add_node_model() {
+           NodeModel="$(get_cypher_query -q "$(__get_NodeModel)" )"
+           if [[ ! -z $NodeModel ]]; then
+               echo "NodeModel already present, not creating."
+           else
+               echo "NodeModel not present, creating."
+               run_cypher_query  -q "CREATE (n:NodeModel {label: 'PersistenceObject', \` _internalId\`: 'long', \` _createdTime\`: 'Date', \` _lastUpdatedTime\`: 'Date', \` _level\`: 'short'})"
+               echo "Creating NodeModel constraints."
+               run_cypher_query -q "$(__create_uniqueconstraint "NodeModel" "label")"
+               run_cypher_query -q "$(__create_uniqueconstraint "RelationshipModel" "type")" 
+           fi
+       }
+       # Create users from data file.
+       create_users_fromFile $1
+       POD="$(getLeader_name)"
+       # Add node model.
+       add_node_model
+       # Create indexes from data file.
+       create_index_fromFile $2
+
+----
+====

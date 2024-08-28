@@ -1,0 +1,164 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "{{ template "eric-data-graph-database-nj.name" . }}"
+  labels:
+    app: {{ template "eric-data-graph-database-nj.name" . }}
+    env: {{ .Values.global.env | quote }}
+spec:
+  template:
+    metadata:
+      labels:
+        app: {{ template "eric-data-graph-database-nj.name" . }}
+        env: {{ .Values.global.env | quote }}
+{{- if .Values.annotations }}
+      annotations:
+  {{- if .Values.annotations.job }}
+{{ toYaml .Values.annotations.job | indent 8 }}
+  {{- end }}
+{{- end }}
+    spec:
+      ttlSecondsAfterFinished: 100
+      restartPolicy: Never
+{{- if .Values.core.initContainer }}
+      initContainers:
+{{ toYaml .Values.core.initContainer | indent 6 }}
+{{- end }}
+      containers:
+      - name: {{ template "eric-data-graph-database-nj.name" . }}
+        {{- if .Values.imageCredentials.registry.url}}
+        image: "{{ .Values.imageCredentials.registry.url }}/{{ .Values.imageCredentials.repoPath }}/{{ .Values.images.graphdb_n4j.name }}:{{ .Values.images.graphdb_n4j.tag }}"
+      {{- else }}
+        image: "{{ .Values.global.registry.url }}/{{ .Values.imageCredentials.repoPath }}/{{ .Values.images.graphdb_n4j.name }}:{{ .Values.images.graphdb_n4j.tag }}"
+      {{- end }}
+        ports:
+          - name: bolt
+            protocol: TCP
+            containerPort: {{ default .Values.config.port.bolt 7687 }}
+            
+        imagePullPolicy: {{ .Values.images.graphdb_n4j.imagePullPolicy | quote }}
+    {{- if .Values.remoteScripts }}
+        env:
+          - name: NUMBER_OF_CORES
+            valueFrom:
+              configMapKeyRef:
+                name: {{ .Values.remoteScripts.graphdb_name }}-environment
+                key: NUMBER_OF_CORES
+          - name: NEO4J_causal__clustering_service
+            valueFrom:
+              configMapKeyRef:
+                name: {{ .Values.remoteScripts.graphdb_name }}-environment
+                key: NEO4J_causal__clustering_service
+          - name: NEO4J_BOLT_PORT
+            valueFrom:
+              configMapKeyRef:
+                name: {{ .Values.remoteScripts.graphdb_name }}-environment
+                key: NEO4J_BOLT
+          - name: NEO4J_PODNAME
+            valueFrom:
+              configMapKeyRef:
+                name: {{ .Values.remoteScripts.graphdb_name }}-environment
+                key: NEO4J_PODNAME
+          - name: NEO4J_HTTP_PORT
+            valueFrom:
+              configMapKeyRef:
+                name: {{ .Values.remoteScripts.graphdb_name }}-environment
+                key: NEO4J_HTTP
+       {{- if .Values.remoteScripts.parameters }}
+          - name: PARAMETERS
+            value:  {{ include "eric-data-graph-database-nj.parameters" .Values.remoteScripts.parameters }}
+      {{- end }}
+          - name: ADMIN_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ .Values.remoteScripts.graphdb_name }}-secrets
+                key: neo4j-password
+          - name: ADMIN_USER
+            value: {{ .Values.remoteScripts.admin_user | quote }}
+      {{- end }}
+                
+{{- if .Values.config.extraVars }}
+{{ toYaml .Values.config.extraVars | indent 10 }}
+{{- end }}
+        command:
+          - "/bin/bash"
+          - "-c"
+          - |
+            # zypper in -l -y jq
+            #****** TO REMOVE 
+            zypper install -y wget
+            wget --no-check-certificate https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64 -O jq
+            chmod 755 jq
+            cp jq /usr/sbin/jq
+            #****** TO REMOVE 
+            zypper in -l -y vim
+            echo "set background=dark" > ~/.vimrc
+            #********
+            mkdir -p /var/lib/neo4j/scripts/
+            cp -fr {{ .Values.scripts.directory }}/* /var/lib/neo4j/scripts/.
+            chown -R neo4j.neo4j /var/lib/neo4j/scripts
+            chmod -R 755 /var/lib/neo4j/scripts/*
+            
+            mkdir -p /var/lib/neo4j/remote-scripts/
+            cp -fr /scripts/* /var/lib/neo4j/remote-scripts/.
+            cp -fr /var/lib/neo4j/remote-scripts/user/*.* /var/lib/neo4j/remote-scripts/install
+            chown -R neo4j:neo4j /var/lib/neo4j/remote-scripts/*
+            chmod -R 755 /var/lib/neo4j/remote-scripts/*
+            
+            cd /var/lib/neo4j/scripts/
+            /var/lib/neo4j/scripts/wait_complete.sh -p {{ default .Values.config.port.bolt 7687 }} -f
+            if [[ $? == 0 ]]; then
+               ./orchestrator.sh "/var/lib/neo4j/remote-scripts" "install" "false"
+            fi
+            exit 0
+        readinessProbe:
+          exec:
+            command:
+            - "/bin/bash"
+            - "-c"
+            - |
+              # Wait until all ports are opened on all the pods
+              
+              /var/lib/neo4j/scripts/wait_complete.sh -p {{ default .Values.config.port.bolt 7687 }} -f
+              exit $?
+{{- if .Values.config.readinessProbe }}
+          initialDelaySeconds: {{ default .Values.config.readinessProbe.initialDelaySeconds 5 }}
+          periodSeconds: {{ default .Values.config.readinessProbe.periodSeconds 10 }}
+          timeoutSeconds: {{ default .Values.config.readinessProbe.timeoutSeconds 60 }}
+          successThreshold: {{ default .Values.config.readinessProbe.successThreshold 1 }}
+          failureThreshold: {{ default .Values.config.readinessProbe.failureThreshold 10 }}
+{{- end }}          
+        volumeMounts:
+{{- if .Values.additionalVolumeMounts }}
+{{ toYaml .Values.additionalVolumeMounts | indent 8 }}
+{{- end }}
+{{- if .Values.remoteScripts }}
+        - name: graphdb-data
+          mountPath: "{{ .Values.scripts.directory }}/orchestrator.sh"
+          subPath: "orchestrator.sh"
+{{- end }}
+        - name: graphdb-data
+          mountPath: "{{ .Values.scripts.directory }}/wait_complete.sh"
+          subPath: "wait_complete.sh"
+
+        - name: scripts
+          mountPath: /scripts
+      volumes:
+        - name: scripts
+          emptyDir: {}
+{{- if .Values.additionalVolumes }}
+{{ toYaml .Values.additionalVolumes  | indent 8 }}
+{{- end }}
+    {{- if .Values.remoteScripts }}
+        - name: graphdb-data
+          configMap:
+            defaultmode: 0777
+            name: {{ .Values.remoteScripts.graphdb_name }}-scripts
+{{- end }}
+{{- if  .Values.imageCredentials.registry.pullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.imageCredentials.registry.pullSecret | quote}}
+      {{- else if .Values.global.registry.pullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.global.registry.pullSecret | quote }}
+{{- end }}

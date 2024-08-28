@@ -1,0 +1,356 @@
+
+global:
+  registry:
+  # Mandatory: Used to compose the image name 
+    url: armdocker.rnd.ericsson.se
+  repoPath: "aia_snapshots"
+ 
+imageCredentials:
+  registry:
+    url: # overrides global registry url
+    #pullSecret: # note: armdocker does not request pullSecret
+  repoPath: "aia_snapshots"
+
+# Mandatory Image information
+images:
+  graphdb_n4j:
+  # Mandatory: Used to compose the global image name
+    name: "graphdb-n4j"
+  # Mandatory: Used to compose the global image name
+    tag: "0.0.1-c2dc540"
+    # Mandatory could be IfNotPresent, Always, Never
+    imagePullPolicy: "Always"
+
+annotations:
+  job:
+    ericsson.com/product-name: "eric-data-graph-database-nj"
+    ericsson.com/product-number: "CAV 101090/1"
+    ericsson.com/product-revision: "R1B"  
+
+config:
+  # Optional Pass extra environment variables to Neo4j container.
+  readinessProbe:
+    # Mandatory Initial time to validate the pod readiness
+    initialDelaySeconds: 10
+    # Mandatory cron time to validate if its active
+    periodSeconds: 60
+    # Mandatory On timeout is restarted
+    timeoutSeconds: 120
+    # Number of success 
+    successThreshold: 1
+    # Number of failed before retry the starting
+    failureThreshold: 3
+  port:
+    bolt: 7687
+    http: 7474  
+  extraVars:
+  - name: "NAMESPACE"
+    value: "eisljos-dev"
+  - name: "CYPHERSHELL_PATH"
+    value: "/var/lib/neo4j/bin/cypher-shell"
+
+core:
+  initContainer:
+  # init containers to run before the Neo4j core pod e.g. to install plugins
+  - name: init-scripts
+    image: "armdocker.rnd.ericsson.se/aia_snapshots/ericneo4jserverextension:0.0.1-1"
+    imagePullPolicy: "Always"
+    volumeMounts:
+    - name: scripts
+      mountPath: /scripts
+    command: ["/bin/sh", "-c"]
+    args:
+      - cp -fr /opt/ericsson/lifecycle-scripts/* /scripts/
+
+# Mandatory: This scripts is the one which controls the execution of the scripts 
+scripts:
+  directory: "/tmp/scripts"
+  orchestrator:
+    filename: "orchestrator.sh"
+# Define the scripts which will be executed by the agent.
+# - Defines the script name and the parameters required for it.
+remoteScripts:
+  graphdb_name: "graphdb-neo4j"
+  admin_user: "neo4j"
+  parameters:
+    agent_unittest.sh: test_create_users.py test_data_import.py test_indexes.py
+
+# Define the remote config map to be used when mounts the files.
+# Config map name should be unique in the namespace. 
+additionalVolumes:
+  - name: user-data
+    configMap:
+      name: &configmap graphdb-agent-configmap
+      defaultMode: 0755
+
+# Mandatory: The only path required to include the scripts into the execution area is 
+# - /var/lib/neo4j/remote-scripts/user/
+additionalVolumeMounts:
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/user/test_create_users.py"
+    subPath: "test_create_users.py"
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/user/test_data_import.py"
+    subPath: "test_data_import.py"
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/user/test_indexes.py"
+    subPath: "test_indexes.py"
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/user/agent_unittest.sh"
+    subPath: "agent_unittest.sh"
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/user/userDefinedIndexes.txt"
+    subPath: "userDefinedIndexes.txt"
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/user/users.yaml"
+    subPath: "users.yaml"
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/user/data.csv"
+    subPath: "data.csv"    
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/user/requeriments.txt"
+    subPath: "requeriments.txt"
+    
+configmap:
+   name: *configmap
+   data:
+     userDefinedIndexes.txt: |
+       :FM:OpenAlarm(fdn)|:`FM:OpenAlarm`(fdn)
+       :FM:OpenAlarm(alarmNumber, objectOfReference)|:`FM:OpenAlarm`(alarmNumber, objectOfReference)
+       :FM:SpecificProblemInformation(specificProblem, neType)|:`FM:SpecificProblemInformation`(specificProblem, neType)
+       :FM:ProbableCauseInformation(probableCause, neType)|:`FM:ProbableCauseInformation`(probableCause, neType)
+     requeriments.txt: |
+       neo4j==1.7.2
+       neo4j-driver==1.7.2
+       neobolt==1.7.4
+       cachetools==2.1.0
+       certifi==2018.4.16
+       chardet==3.0.4
+       google-auth==1.5.1
+       idna==2.7
+       ipaddress==1.0.22
+       Jinja2==2.10
+       kubernetes==6.0.0
+       MarkupSafe==1.0
+       nose==1.3.7
+       nose-html-reporting==0.2.3
+       nose-htmloutput==0.6.0
+       oauthlib==2.1.0
+       pyasn1==0.4.4
+       pyasn1-modules==0.2.2
+       python-dateutil==2.7.3
+       PyYAML==3.13
+       requests==2.19.1
+       requests-oauthlib==1.0.0
+       rsa==3.4.2
+       six==1.11.0
+       urllib3==1.23
+       websocket-client==0.48.0
+       pandas==0.24.2
+     users.yaml: |
+       ---
+       - username: niamh
+         password: test
+         requirePasswordChange: false
+         role: architect
+       - username: reader_user
+         password: reader
+         requirePasswordChange: false
+         role: reader
+       - username: test
+         password: testing
+         requirePasswordChange: false
+         role: reader
+     data.csv: |-
+       personId,name,birthYear,deathYear
+       23945,Gérard Pirès,1942,
+       553509,Helen Reddy,1941,
+       113934,Susan Flannery,1939,
+       26706,David Rintoul,1948,
+       237537,Rita Marley,1946,
+       11502,Harry Davenport,1866,1949
+       11792,George Dickerson,1933,
+       7242,Temuera Morrison,1960,
+       3482,Chus Lampreave,1930,
+       56687,Fyvush Finkel,1922,
+       99461,Cedric Hardwicke,1893,1964
+       68411,Sô Yamamura,1910,2000
+       1138,Benoît Régent,1953,1994
+       5590,Elle Macpherson,1963,
+       3292,Nicholas Hoult,1989,
+       37759,Kathy Burke,1964,
+       48464,Joel Palmer,1986,
+       27763,Casper Van Dien,1968,
+     test_indexes.py: |-
+       from neo4j import GraphDatabase, basic_auth
+       import os
+       import sys
+
+
+       pod = os.environ['LEADER_POD']
+       host = "bolt+routing://" + pod + "." + \
+           os.environ['NEO4J_causal__clustering_service']
+       user = os.environ['ADMIN_USER']
+       password = os.environ['ADMIN_PASSWORD']
+
+       driver = GraphDatabase.driver(
+           host, auth=basic_auth(user=user, password=password))
+       session = driver.session()
+       number_of_indexes = 0
+       user_data = []
+       indexes = {}
+
+
+       def setUp(self):
+           global indexes
+           filepath = "userDefinedIndexes.txt"
+           if not os.path.isfile(filepath):
+              print("File path {} does not exist. Exiting...".format(filepath))
+              sys.exit()
+           indexes = {}
+           with open(filepath) as fp:
+               number_entries = 0
+               for line in fp:
+                   createIndex(line.strip().split('|'), indexes, number_entries)
+                   number_entries += 1
+
+
+       def tearDown():
+           global indexes
+           for index in indexes:
+               print("Deleting {}".format(str(indexes[index])))
+               session.run("DROP INDEX ON " + str(indexes[index]))
+           session.close()
+
+
+       def test_get_indexes():
+           number_of_entries = 0
+           index_string = "FM"
+           result = session.run("CALL db.indexes()")
+           for record in result:
+               index_name = "description"
+               if record[index_name].find(index_string) > 0:
+                   print(record[index_name])
+                   number_of_entries += 1
+           print("Number of entries after read is: " + str(number_of_entries) + "\n")
+           assert (number_of_entries >= len(indexes)), "Unexpected length!"
+
+
+       def createIndex(index, indexes, number_entries):
+           for section in index:
+               if section != '':
+                   session.run("CREATE INDEX ON " + str(index[1]))
+                   indexes[number_entries] = str(index[1])
+
+
+
+     test_data_import.py: |-
+       #
+       # This test assumes data has already been loaded into the database (as is expected from the orchastrator)
+       #
+       from neo4j import GraphDatabase, basic_auth
+       import pandas as pd
+       import os
+
+       pod = os.environ['LEADER_POD']
+       host = "bolt+routing://" + pod + "." +os.environ['NEO4J_causal__clustering_service']
+       user = os.environ['ADMIN_USER']
+       password = os.environ['ADMIN_PASSWORD']
+
+       driver = GraphDatabase.driver(host, auth=basic_auth(user=user, password=password))
+       session = driver.session()
+       # This is the csv file that contains the data to be imported into the GraphDB database. The Node name is Person
+       data = pd.read_csv('data.csv') 
+       def test_entries():
+           result = session.run("MATCH (n:Person) RETURN count(*)")
+           for record in result:
+               print(record)
+           assert (record[0] == len(data)), "Unexpected length!"
+     test_create_users.py: |-
+       from neo4j import GraphDatabase, basic_auth
+       import yaml
+       import sys
+       import os
+
+       pod = os.environ['LEADER_POD']
+       host = "bolt+routing://" + pod + "." +os.environ['NEO4J_causal__clustering_service']
+       user = os.environ['ADMIN_USER']
+       password = os.environ['ADMIN_PASSWORD']
+
+       driver = GraphDatabase.driver(host, auth=basic_auth(user=user, password=password))
+       session = driver.session()
+       number_of_users = 0
+       user_data = []
+       def setUp(self):
+           global number_of_users
+           global user_data
+           
+           with open("users.yaml", 'r') as stream:
+               try:
+                   user_data = yaml.safe_load(stream)
+               except yaml.YAMLError as exc:
+                   print(exc)
+           for i in user_data:
+               session.run("CALL dbms.security.createUser('" + str(user_data[number_of_users]["username"]) + "', '"
+                    + str(user_data[number_of_users]["password"]) + "', "
+                    + str(user_data[number_of_users]["requirePasswordChange"]) + ")")
+               session.run("CALL dbms.security.addRoleToUser('" + str(user_data[number_of_users]["role"]) + "', '"
+                    + str(user_data[number_of_users]["username"]) + "')")
+               number_of_users += 1
+       def tearDown():
+           global number_of_users
+           number_of_users =0
+           for i in user_data:
+               session.run("CALL dbms.security.deleteUser('" + str(user_data[number_of_users]["username"]) + "')")
+               number_of_users += 1
+           session.close()
+       def test_get_users():
+           number_of_entries = 0
+           result = session.run("CALL dbms.security.listUsers")
+           for record in result:
+               print(record)
+               number_of_entries += 1
+           print("Number of entries after read is: " + str(number_of_users) + "\n")
+           assert (number_of_users >= len(user_data)), "Unexpected length!"
+       def test_create_user():
+           session.run("CALL dbms.security.createUser('testUser', 'testPassword', false)")
+           result = session.run("CALL dbms.security.listUsers")
+           for user in result:
+               if 'testUser' in user[0]:
+                   print("User found!")
+                   assert True
+               else:
+                   ''
+       def test_update_user():
+           session.run("CALL dbms.security.addRoleToUser('reader', 'testUser')")
+           result = session.run("CALL dbms.security.listRolesForUser('testUser')")
+           for role in result:
+               assert (role[0] == 'reader'), "Unexpected role!"
+       def test_delete_user():
+           session.run("CALL dbms.security.deleteUser('testUser')")
+           result = session.run("CALL dbms.security.listUsers")
+           for user in result:
+               print(user[0])
+               assert (user[0] != 'testUser'), "Found the user!"
+
+     agent_unittest.sh: |-
+       #!/bin/bash
+       # This file must be mounted on .Values.scripts.directory for the executed
+       SCRIPT_PATH=$(dirname "$0")
+       if [ "$0" != "$SCRIPT_PATH" ] && [ "$SCRIPT_PATH" != "" ]; then
+           cd $SCRIPT_PATH
+       fi
+       source $SCRIPT_PATH/"common.sh"
+       wget --no-check-certificate https://bootstrap.pypa.io/get-pip.py -O get-pip.py > /dev/null 2>&1
+       python3 get-pip.py > /dev/null 2>&1
+       pip install nose > /dev/null 2>&1
+       pip3 install -r $SCRIPT_PATH/requeriments.txt > /dev/null 2>&1
+       LEADER_POD="$(getLeader_name)"
+       declare -x LEADER_POD
+
+       echo "Testing Users:"
+       nosetests -vs $1
+       echo "Testing import data:"
+       nosetests -vs $2
+       echo "Testing index:"
+       nosetests -vs $3

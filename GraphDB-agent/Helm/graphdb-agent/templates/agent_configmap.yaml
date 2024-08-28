@@ -1,0 +1,14 @@
+{{ if .Values.configmap }}
+apiVersion: "v1"
+kind: ConfigMap
+metadata:
+  name: {{ .Values.configmap.name | quote }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+    # app: {{  template "eric-data-graph-database-nj.name" . }}
+    # env: {{ .Values.global.env | quote }}
+    app.kubernetes.io/instance: {{.Release.Name | quote }}
+data:
+{{ .Values.configmap.data | toYaml | trimSuffix "\n" | indent 2 }}
+
+{{- end }}

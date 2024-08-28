@@ -1,0 +1,73 @@
+
+global:
+  registry:
+  # Mandatory: Used to compose the image name 
+    url: armdocker.rnd.ericsson.se
+  repoPath: "aia_snapshots"
+ 
+imageCredentials:
+  registry:
+    url: # overrides global registry url
+    #pullSecret: # note: armdocker does not request pullSecret
+  repoPath: "aia_snapshots"
+
+# Mandatory Image information
+images:
+  graphdb_n4j:
+  # Mandatory: Used to compose the global image name
+    name: "graphdb-n4j"
+  # Mandatory: Used to compose the global image name
+    tag: "0.0.1-c2dc540"
+    # Mandatory could be IfNotPresent, Always, Never
+    imagePullPolicy: "Always"
+
+annotations:
+  job:
+    ericsson.com/product-name: "eric-data-graph-database-nj"
+    ericsson.com/product-number: "CAV 101090/1"
+    ericsson.com/product-revision: "R1B"  
+
+config:
+  readinessProbe:
+    # Mandatory Initial time to validate the pod readiness
+    initialDelaySeconds: 10
+    # Mandatory cron time to validate if its active
+    periodSeconds: 60
+    # Mandatory On timeout is restarted
+    timeoutSeconds: 120
+    # Number of success 
+    successThreshold: 1
+    # Number of failed before retry the starting
+    failureThreshold: 10
+  port:
+    bolt: 7687
+    http: 7474
+  extraVars:
+  - name: "NAMESPACE"
+    value: ""
+  - name: "CYPHERSHELL_PATH"
+    value: "/var/lib/neo4j/bin/cypher-shell"
+
+core:
+  initContainer:
+  # init containers to run before the Neo4j core pod e.g. to install plugins
+  - name: init-scripts
+    image: "armdocker.rnd.ericsson.se/aia_snapshots/ericneo4jserverextension:0.0.1-1"
+    imagePullPolicy: "Always"
+    volumeMounts:
+    - name: scripts
+      mountPath: /scripts
+    command: ["/bin/sh", "-c"]
+    args:
+      - cp -fr /opt/ericsson/lifecycle-scripts/* /scripts/
+
+# Mandatory: This scripts is the one which controls the execution of the scripts 
+scripts:
+  directory: "/tmp/scripts"
+# Define the scripts which will be executed by the agent.
+# - Defines the script name and the parameters required for it.
+remoteScripts: []
+
+additionalVolumes: []
+additionalVolumeMounts: []
+configmap: []

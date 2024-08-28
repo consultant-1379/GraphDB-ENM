@@ -1,0 +1,6 @@
+{{- define "eric-data-graph-database-nj.helm-annotations" }}
+annotations:
+  ericsson.com/product-name: "eric-data-graph-database-nj"
+  ericsson.com/product-number: "CAV 101090/1"
+  ericsson.com/product-revision: "R1B"
+{{- end}}

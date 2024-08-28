@@ -1,0 +1,403 @@
+# nameOverride: "graphdb-neo4j"
+
+updateStrategy:
+  # Mandatory: Using RollingUpdate as indicated on DR-HC-060
+  type: RollingUpdate
+  rollingUpdate:
+    # Mandatory: specifies the maximum number of Pods that can be unavailable during the update process and shall be mapped to
+    maxUnavailable: 50%
+    # Optional specifies the maximum number of Pods that can be created over the desired number of Pod and shall be mapped to
+    maxSurge: 50%
+
+global:
+  registry:
+  # Mandatory: Used to compose the image name 
+    url: armdocker.rnd.ericsson.se
+  # Optional If it's a licensed neo4j version must agree the license
+  acceptLicenseAgreement: "yes"
+  env: "beta"
+  #repoPath: "aia_releases"
+  repoPath: "aia_releases"
+
+# Optional to use an alternative repository  
+imageCredentials:
+  registry:
+  # Mandatory: Used to compose the global image name
+    url: armdocker.rnd.ericsson.se
+  # Mandatory: Used to compose the global image name
+  repoPath: "aia_snapshots"
+
+# Mandatory Image information
+images:
+  graphdb_n4j:
+  # Mandatory: Used to compose the global image name
+    name: "graphdb-n4j"
+  # Mandatory: Used to compose the global image name
+    # tag: "0.0.1-48"
+    tag: "0.0.1-7972098"
+    # Mandatory could be IfNotPresent, Always, Never
+    imagePullPolicy: "Always"
+  jmxExporter:
+  # Mandatory: Used to compose the global jmx exporter image name
+    name: prometheus-jmx-exporter-0.3.1
+  # Mandatory: Used to compose the global jmx exporter image name
+    tag:  0.0.3-SNAPSHOT-1
+    imagePullPolicy: "Always"
+
+productInfo:
+  # R-State of the product. R State should match helm chart version (3.1.0 -> R2A)
+  rstate: RSTATE
+
+annotations:
+  pod:
+    ericsson.com/product-name: "eric-data-graph-database-nj"
+    ericsson.com/product-number: "CAV 101090/1"
+    ericsson.com/product-revision: "R1B"  
+  prometheus:
+    prometheus.io/path: "/metrics"
+    prometheus.io/port: "21000"
+    prometheus.io/scrape: "true"
+  persistentVolume: {}
+
+ingress:
+  enabled: true
+  hostname:
+
+config:
+  # Mandatory Use password authentication
+  authEnabled: true
+  # Optional Specify password for neo4j user
+  # Optional Defaults to a random 10-character alphanumeric string if not set and authEnabled is true
+  neo4jPassword: "Neo4jadmin123"
+  # Specify cluster domain (used eg. as suffix in definition of NEO4J_causal__clustering_initial__discovery__members environment variable)
+  clusterDomain: "cluster.local"
+  #Mandatory Specify causal clustering instances communicate over the network to ensure consistency of the database.
+  ## LIST, DNS, SRV, K8S 
+  clusterDiscoveryType: LIST
+  #Mandatory Neo4j current ports used 
+  port:
+    # Mandatory neo4j http port
+    http: 7474
+    # Mandatory specifies where the bolt driver ( client-server protocol designed for database applications )
+    bolt: 7687
+    # Mandatory specifies where the instance advertises where it will listen for requests for transactions in the transaction-shipping catchup protocol.
+    tx: 6000
+    # Mandatory port to bind the cluster member discovery management communication.
+    discovery: 5000
+    # Mandatory The address/port setting that specifies which network interface and port the Neo4j instance will bind to for cluster communication.
+    raft: 7000
+    # Optional for kubernetes monitoring
+    ## --NEED to be set in templates
+    prometheus.monitoring: 2004
+    # Mandatory: Port protocol to use JMX
+    jmx: 3637
+    # Mandatory: Remote Backup port protocol for enterprise
+    remote_backup: 6362
+  # Mandatory Used when pods needs to be recreated  
+  liveness:
+    # Mandatory Initial time to validate the pod liveness  
+    initialDelaySeconds: 300
+    # Mandatory cron time to validate if is still active
+    periodSeconds: 60
+    # Mandatory On timeout is restarted
+    timeoutSeconds: 300
+    # Number of failed before restart
+    failureThreshold: 10
+    # Number of success 
+    successThreshold: 1
+
+  # Mandatory Used when pods are considered ready to attend  
+  readinessProbe:
+    # Mandatory Initial time to validate the pod readiness
+    initialDelaySeconds: 10
+    # Mandatory cron time to validate if its active
+    periodSeconds: 60
+    # Mandatory On timeout is restarted
+    timeoutSeconds: 600
+    # Number of success 
+    successThreshold: 1
+    # Number of failed before retry the starting
+    failureThreshold: 10
+
+  # Optional Pass extra environment variables to Neo4j container.
+  extraVars:
+  #Optional: Neo4j the heap memory size
+  - name: "NEO4J_dbms_memory_heap_max__size"
+    value: "4096m"
+  - name: "NEO4J_dbms_memory_heap_initial__size"
+    value: "2048m"
+  - name: "NEO4J_dbms_connector_bolt_address"
+    value: "0.0.0.0:7687"
+  - name: "NEO4J_dbms_connector_http_address"
+    value: "0.0.0.0:7474"
+  # Mandatory: Specify one of the followings DEBUG, INFO, WARN, ERROR, NONE
+  - name: "NEO4J_dbms_logs_debug_level"
+    value: "INFO"
+  # Mandatory: To allow remote backups
+  - name: "NEO4J_dbms_backup_enabled"
+    value: "true"
+  # Mandatory: To allow remote backups ipaddress  
+  - name: NEO4J_dbms_backup_address
+    value: 0.0.0.0:6362
+  ### ENM Settings  
+  - name: NEO4J_dbms_security_procedures_unrestricted
+    value: "ericsson.driver.*"
+  ##Comma-separated list of <classname>=<mount point> for unmanaged extensions
+  - name: NEO4J_dbms_unmanaged__extension__classes
+    value: "com.ericsson.oss.itpf.datalayer.dps.neo4j.driver.transport.bolt.extension=/boltex"
+  # track_query_allocation: Enables or disables tracking of how many bytes are allocated by the execution of a query.
+  - name: NEO4J_dbms_track__query__allocation
+    value: "false"
+  #Enable the UDC extension.
+  - name: NEO4J_dbms_udc_enabled
+    value: "false"
+  # Enable a remote shell server which Neo4j Shell clients can log in to.
+  - name: NEO4J_dbms_shell_enabled
+    value: "true"
+  # Remote host for shell.
+  - name: NEO4J_dbms_shell_host
+    value: "127.0.0.1"
+  # The port the shell will listen on.
+  - name: NEO4J_dbms_shell_port
+    value: "1337"
+  # transaction.timeout: The maximum time interval of a transaction within which it should be completed.
+  - name: NEO4J_dbms_transaction_timeout
+    value: "10m"
+  # Enable auth requirement to access Neo4j.
+  - name: NEO4J_dbms_security_auth__enabled
+    value: "true"
+  # Require authorization for access to the Causal Clustering status endpoints.
+  - name: NEO4J_dbms_security_causal__clustering__status__auth__enabled
+    value: "true"
+  #Specifies the size of id batches local to each transaction when committing. " +
+  #"Committing a transaction which contains changes most often results in new data records being created. " +
+  #"For each record a new id needs to be generated from an id generator. " +
+  #"It's more efficient to allocate a batch of ids from the contended id generator, which the transaction " +
+  #"holds and generates ids from while creating these new records. " +
+  #"This setting specifies how big those batches are. " +
+  #"Remaining ids are freed back to id generator on clean shutdown.
+  - name: NEO4J_unsupported_dbms_record__id__batch__size
+    value: "20"
+  # The maximum time an idle thread in the thread pool bound to this connector will wait for new tasks.
+  - name: NEO4J_dbms_connector_bolt_thread__pool__keep__alive
+    value: "5m"
+  # Additional JVM arguments. Argument order can be significant. To use a Java commercial feature, the argument to unlock commercial features 
+  # must precede the argument to enable the specific feature in the config value string.
+  - name: NEO4J_dbms_jvm_additional
+    value: "-Dcom.sun.management.jmxremote -Dorg.neo4j.causalclustering.core.EnterpriseCoreEditionModule.idReuse=true -Dunsupported.dbms.udc.source=rpm -Djdk.tls.ephemeralDHKeySize=2048 -XX:+UseG1GC -XX:-OmitStackTraceInFastThrow -XX:+AlwaysPreTouch -XX:+DisableExplicitGC -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.password.file=/var/lib/neo4j/jmx/jmx.password -Dcom.sun.management.jmxremote.access.file=/var/lib/neo4j/jmx/jmx.access -Dcom.sun.management.jmxremote.port=3637 "    
+  # Enable pre-voting extension to the Raft protocol (this is breaking and must match between the core cluster members).
+  - name: NEO4J_causal__clustering_enable__pre__voting
+    value: "true"
+  # The size of the ID allocation requests Core servers will make when they run out of PROPERTY_KEY_TOKEN IDs.
+  - name: NEO4J_causal__causal__clustering_property__key__token__id__allocation__size
+    value: "1024"
+  # The size of the ID allocation requests Core servers will make when they run out of STRING_BLOCK IDs.
+  - name: NEO4J_causal__clustering_string__block__id__allocation__size
+    value: "131072"
+  # The size of the ID allocation requests Core servers will make when they run out of RELATIONSHIP IDs. 
+  # Larger values mean less frequent requests but also result in more unused IDs (and unused disk space) in the event of a crash.
+  - name: NEO4J_causal__clustering_relationship__id__allocation__size
+    value: "131072"
+  # How long drivers should cache the data from the dbms.cluster.routing.getServers() procedure.
+  - name: NEO4J_causal__clustering_cluster__routing__ttl
+    value: "60s"
+  - name: NEO4J_dbms_security_allow__csv__import__from__file__urls
+    value: "true"
+    
+  # Enable encryption on the backup service for CC instances (does not work for single-instance or HA clusters)
+  #- name: NEO4J_dbms_backup_ssl__policy
+  #  value: backup
+    
+  # Optional to activate jmx container
+  jmx:
+    enabled: true
+    authenticate: false
+    ssl: false
+    rmiServer: 127.0.0.1
+    directory: "/tmp/jmx"
+    password:
+      filename: "jmx.password"
+      jmx.password: |
+        monitor Neo4j
+    access:    
+      filename: "jmx.access"
+      jmx.access: |
+        # Define a role called 'monitor' with readonly access:
+        monitor readonly
+        # Uncomment this line to define a administrator role:
+        #control readwrite
+
+services:
+   clusterIP: "None"
+   externalIPs: []
+   loadBalancerIP: ""
+   loadBalancerSourceRanges: []
+   # optional If defined clusterDiscoveryType as DNS needs to be defined
+   dns:
+     port: 7474
+     protocol: "TCP"
+
+#Optional for highly available applications for automated cluster actions for pods disruptions
+podDisruptionBudget: {}
+  # minAvailable: 2
+  # maxUnavailable: 1
+
+#Optional: Enabled false will use EmptyDir instead 
+persistentVolumeClaim:
+  # True: The Database will be exposed in a Physical Volume 
+  # False: The database is handled in the internal empty pod volume
+  enabled: true
+
+  # Optional: Specify a particular independent claim to use with the DB
+  # existingClaim: 
+  # Optional: Not remove PVC on helm operations
+  resourcePolicy: "keep"
+  # Mandatory: Must be changed to the appropieted value "Delete", "Recycle", "Retain"
+  reclaimPolicy: "Retain"
+  # Host path used in PV to mount in the NFS Server 
+  # Example hot to define the NFS Server
+  #nfs:
+  #   ip: servername
+  #   datapath: /data2
+  #   bckpath: /data3
+  #   logpath: /data4
+ #Mandatory for PV: ReadWriteOnce, ReadOnlyMany, ReadWriteMany 
+  accessMode: ReadWriteOnce
+  ## Mandatory: neo4j server data path
+  mountPath: /data
+  
+  ## core server data Persistent Volume size
+  size: 5Gi
+  
+  # Optional core server data Persistent Volume Storage Class
+  # If defined, storageClassName: <storageClass>
+  # If set to "-", storageClassName: "", which disables dynamic provisioning
+  # If undefined (the default) or set to null, no storageClassName spec isf
+  #   set, choosing the default provisioner.  (gp2 on AWS, standard on
+  #   GKE, AWS & OpenStack)
+  storageClass: "erikube-rbd"
+  #storageClass: manual
+  # Subdirectory of core server data Persistent Volume to mount
+  # Useful if the volume's root directory is not empty
+  # subPath: data
+    
+  # Online Volume backup settings. 
+  # Community edition doesn't support online backups
+  backup:
+    # Pod volumne mount path
+    mountPath: /backups
+    # default Size for online backups process. 
+    size: 2Gi
+    # If want to use a pre-defined PVC, define it using existingClaim
+    # existingClaim: 
+    accessMode: ReadWriteOnce
+    # If needs to use the default storageclass needs to be set as "-"
+    storageClass: "erikube-rbd"
+    # if PVC is removed, keeps the information on the Physical Volume
+    reclaimPolicy: Retain
+  logging:
+    mountDir: /logs
+    size: 2Gi
+    # existingClaim: 
+    accessMode: ReadWriteOnce
+    reclaimPolicy: Retain
+    storageClass: "erikube-rbd"
+
+# Replica Cores settings for deployments
+core:
+  numberOfServers: 3
+
+  sidecarContainers: []
+  ## Additional containers to be added to the Neo4j core pod.
+  #  - name: my-sidecar
+  #    image: nginx:latest
+
+  initContainers: 
+  # init containers to run before the Neo4j core pod e.g. to install plugins
+  - name: init-plugins
+    image: "armdocker.rnd.ericsson.se/proj_oss_releases/enm/eric-enm-neo4j-server-extension"
+    imagePullPolicy: "Always"
+    volumeMounts:
+    - name: plugins
+      mountPath: /plugins
+    command: ["/bin/sh", "-c"]
+    args:
+      - cp /ericsson/3pp/neo4j/plugins/* /plugins/
+# Read Replicas
+readReplica:
+  numberOfServers: 0
+  # Pass extra environment variables to the Neo4j container.
+  #
+  # extraVars:
+  # - name: EXTRA_VAR_1
+  #   value: extra-var-value-1
+  # - name: EXTRA_VAR_2
+  #   value: extra-var-value-2
+
+  sidecarContainers: []
+  # Additional containers to be added to the Neo4j replica pod.
+  #  - name: my-sidecar
+  #    image: nginx:latest
+
+  initContainers: []
+
+autoscaling:
+  enable: false
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 16
+    # Note: when setting this, a `resources.request.cpu` is required. You
+    # likely want to set it to `1` or some lower value.
+    targetCPUUtilizationPercentage: "80%"
+    targetMemoryUtilizationPercentage: "70%"
+
+resources:
+  graphdb:
+    limits:
+      # 1000m represents 1 CPU
+      cpu: 2000m
+      memory: 4096Mi
+    requests:
+      cpu: 1000m
+      memory: 2048Mi
+  jmxexecutor:
+    limits:
+      cpu: 200m
+      memory: 1024Mi
+    requests:
+      cpu: 200m
+      memory: 1024Mi
+
+metrics:
+  rules: "metrics/rules.yml"
+  
+jmxExecutor:
+  # These are AIA configuration parameters, they are passed into this script https://gerrit.ericsson.se/gitweb?p=AIA/microservices/prometheus-jmx.git;a=blob;f=Docker/start.sh;h=3096b5892ce46141c3884e2f5b96e8bbd6f0dd40;hb=refs/heads/master at container startup.
+  destPort: 3637
+  servicePort: 21000
+  rules: "cas-rules"
+  rulesDirectory: /opt/jmx_exporter/rules
+  # These are prometheus configuration
+  #path: /metrics
+  #scrape: true
+  exporter:
+    filename: "cas-rules.yaml"
+    cas-rules.yaml: |
+      lowercaseOutputLabelNames: true
+      lowercaseOutputName: true
+scripts:
+  directory: "/tmp/scripts"
+  # Executes an full online backup as part of the pre-upgrade process
+  backup:
+    filename: "backup.sh"
+  # Execute remote ports validations for liveness  
+  remote:
+    filename: "remote.sh"
+  wait_complete:
+    filename: "wait_complete.sh" 
+  consistency:
+    filename: "consistency.sh" 
+
+# Used in conjuntion of log-shipper
+additionalVolumes: []
+additionalVolumeMounts: []

@@ -1,0 +1,150 @@
+
+global:
+  registry:
+  # Mandatory: Used to compose the image name 
+    url: armdocker.rnd.ericsson.se
+  repoPath: "aia_snapshots"
+ 
+imageCredentials:
+  registry:
+    url: # overrides global registry url
+    #pullSecret: # note: armdocker does not request pullSecret
+  repoPath: "aia_snapshots"
+
+# Mandatory Image information
+images:
+  graphdb_n4j:
+  # Mandatory: Used to compose the global image name
+    name: "graphdb-n4j"
+  # Mandatory: Used to compose the global image name
+    tag: "0.0.1-c2dc540"
+    # Mandatory could be IfNotPresent, Always, Never
+    imagePullPolicy: "Always"
+
+annotations:
+  job:
+    ericsson.com/product-name: "eric-data-graph-database-nj"
+    ericsson.com/product-number: "CAV 101090/1"
+    ericsson.com/product-revision: "R1B"  
+
+config:
+  # Optional Pass extra environment variables to Neo4j container.
+  readinessProbe:
+    # Mandatory Initial time to validate the pod readiness
+    initialDelaySeconds: 10
+    # Mandatory cron time to validate if its active
+    periodSeconds: 60
+    # Mandatory On timeout is restarted
+    timeoutSeconds: 120
+    # Number of success 
+    successThreshold: 1
+    # Number of failed before retry the starting
+    failureThreshold: 10
+  port:
+    bolt: 7687
+    http: 7474  
+  extraVars:
+  - name: "NAMESPACE"
+    value: "euler-enm"
+  - name: "CYPHERSHELL_PATH"
+    value: "/var/lib/neo4j/bin/cypher-shell"
+
+core:
+  initContainer:
+  # init containers to run before the Neo4j core pod e.g. to install plugins
+  - name: init-scripts
+    image: "armdocker.rnd.ericsson.se/aia_snapshots/ericneo4jserverextension:0.0.1-1"
+    imagePullPolicy: "Always"
+    volumeMounts:
+    - name: scripts
+      mountPath: /scripts
+    command: ["/bin/sh", "-c"]
+    args:
+      - cp -fr /opt/ericsson/lifecycle-scripts/* /scripts/
+
+# Mandatory: This scripts is the one which controls the execution of the scripts 
+scripts:
+  directory: "/tmp/scripts"
+  orchestrator:
+    filename: "orchestrator.sh"
+# Define the scripts which will be executed by the agent.
+# - Defines the script name and the parameters required for it.
+remoteScripts:
+  graphdb_name: "graphdb-neo4j"
+  admin_user: "neo4j"
+  parameters: 
+    check_neo4j.sh: -n 3
+    configuregraphdb.sh: /var/lib/neo4j/remote-scripts/data/newUsers.json /var/lib/neo4j/remote-scripts/data/userDefinedIndexes.txt
+
+# Define the remote config map to be used when mounts the files.
+# Config map name should be unique in the namespace. 
+additionalVolumes:
+  - name: user-data
+    configMap:
+      name: &configmap graphdb-agent-configmap
+      defaultMode: 0755
+
+# Mandatory: The only path required to include the scripts into the execution area is 
+# - /var/lib/neo4j/remote-scripts/user/
+additionalVolumeMounts:
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/user/configuregraphdb.sh"
+    subPath: "configuregraphdb.sh"
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/data/userDefinedIndexes.txt"
+    subPath: "userDefinedIndexes.txt"
+  - name: user-data
+    mountPath: "/var/lib/neo4j/remote-scripts/data/newUsers.json"
+    subPath: "newUsers.json"
+configmap:
+   name: *configmap
+   data:
+     userDefinedIndexes.txt: |
+       INDEX ON :FM:OpenAlarm(fdn)|INDEX ON :`FM:OpenAlarm`(fdn)
+       INDEX ON :FM:OpenAlarm(alarmNumber, objectOfReference)|INDEX ON :`FM:OpenAlarm`(alarmNumber, objectOfReference)
+       INDEX ON :FM:SpecificProblemInformation(specificProblem, neType)|INDEX ON :`FM:SpecificProblemInformation`(specificProblem, neType)
+       INDEX ON :FM:ProbableCauseInformation(probableCause, neType)|INDEX ON :`FM:ProbableCauseInformation`(probableCause, neType)
+       INDEX ON :FM:EventTypeInformation(eventType, neType)|INDEX ON :`FM:EventTypeInformation`(eventType, neType)
+       INDEX ON :FM:AlarmTypeStatistic(fdn)|INDEX ON :`FM:AlarmTypeStatistic`(fdn)
+       INDEX ON :FM:AlarmCountStatistic(fdn)|INDEX ON :`FM:AlarmCountStatistic`(fdn)
+       INDEX ON :FM:AlarmSeverityStatistic(fdn)|INDEX ON :`FM:AlarmSeverityStatistic`(fdn)
+       INDEX ON :BatchExportService:NodeExportResult(jobId, _bucket)|INDEX ON :`BatchExportService:NodeExportResult`(jobId, ` _bucket`)
+       INDEX ON :BatchExportService:JobInput(jobId, _bucket)|INDEX ON :`BatchExportService:JobInput`(jobId, ` _bucket`)
+       INDEX ON :BatchExportService:JobOutput(jobId, _bucket)|INDEX ON :`BatchExportService:JobOutput`(jobId, ` _bucket`)
+       INDEX ON :BatchExportService:MasterExportJobInput(jobId, _bucket)|INDEX ON :`BatchExportService:MasterExportJobInput`(jobId, ` _bucket`)
+       INDEX ON :CmConfigService:NodeCopyResult(jobId, _bucket)|INDEX ON :`CmConfigService:NodeCopyResult`(jobId, ` _bucket`)
+       INDEX ON :CmConfigService:JobOutput(jobId, _bucket)|INDEX ON :`CmConfigService:JobOutput`(jobId, ` _bucket`)
+       INDEX ON :CmConfigService:AppliedChangeResult(jobId, _bucket)|INDEX ON :`CmConfigService:AppliedChangeResult`(jobId, ` _bucket`)
+       INDEX ON :CmConfigService:ActivateJobOutput(jobId, _bucket)|INDEX ON :`CmConfigService:ActivateJobOutput`(jobId, ` _bucket`)
+       INDEX ON :shm:NEJob(mainJobId, _bucket)|INDEX ON :`shm:NEJob`(mainJobId, ` _bucket`)
+       INDEX ON :shm:ActivityJob(neJobId, _bucket)|INDEX ON :`shm:ActivityJob`(neJobId, ` _bucket`)
+     newUsers.json: |
+       [
+        { "username":"dps_user","password":"demo","requirePasswordChange":false ,"role":"architect"},
+        { "username":"reader_user","password":"demo","requirePasswordChange":false ,"role":"reader"},
+        { "username":"test_admin","password":"test_admin","requirePasswordChange":false ,"role":"admin"}
+       ]
+     configuregraphdb.sh: |-
+       #!/bin/bash
+       # This file must be mounted on .Values.scripts.directory for the executed
+       SCRIPT_PATH=$(dirname "$0")
+       source $SCRIPT_PATH/"common.sh"
+       add_node_model() {
+           NodeModel="$(get_cypher_query -q "$(__get_NodeModel)" )"
+           if [[ ! -z $NodeModel ]]; then
+               echo "NodeModel already present, not creating."
+           else
+               echo "NodeModel not present, creating."
+               run_cypher_query  -q "CREATE (n:NodeModel {label: 'PersistenceObject', \` _internalId\`: 'long', \` _createdTime\`: 'Date', \` _lastUpdatedTime\`: 'Date', \` _level\`: 'short'})"
+               echo "Creating NodeModel constraints."
+               run_cypher_query -q "$(__create_uniqueconstraint "NodeModel" "label")"
+               run_cypher_query -q "$(__create_uniqueconstraint "RelationshipModel" "type")" 
+           fi
+       }
+       # Create users from data file.
+       create_users_fromFile $1
+       POD="$(getLeader_name)"
+       # Add node model.
+       add_node_model
+       # Create indexes from data file.
+       create_index_fromFile $2
